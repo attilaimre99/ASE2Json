@@ -1,5 +1,4 @@
 import requests
-import json
 
 LENGTH_OF_INT = 4
 LENGTH_OF_SHORT = 2
@@ -131,7 +130,7 @@ def parse_server_v2(buffer):
 
         # Ip address
         ip_pieces = []
-        for x in range(4):
+        for x in range(LENGTH_OF_INT):
             ip = buffer.read(LENGTH_OF_CHAR)
             ip_pieces.append(str(ip))
         
@@ -189,7 +188,7 @@ def parse_server_v2(buffer):
             numItems = buffer.read(LENGTH_OF_CHAR)
 
             # Skip
-            buffer.seek(buffer.tell() + 2*numItems)
+            buffer.seek(buffer.tell() + LENGTH_OF_SHORT*numItems)
 
         # Only used for MTA, we don't care
         if (flags & FLAGS["ASE_KEEP_FLAG"]) != 0:
@@ -251,24 +250,21 @@ def format_json(servers):
 
     return string
 
-def main():    
-    # We get the data from the official server
-    r = requests.get('https://master.multitheftauto.com/ase/mta/').content
-    buffer = Buffer(r)
-    
-    # Check the first byte of the string
-    count = buffer.read(LENGTH_OF_SHORT)
-    ver = 0
-    if count == 0:
-        # If the first byte is 0 that means that it uses the default version where there are lots of data about the servers
-        ver = buffer.read(LENGTH_OF_SHORT)
+# We get the data from the official server
+r = requests.get('https://master.multitheftauto.com/ase/mta/').content
+buffer = Buffer(r)
 
-    servers = []
-    if ver == 0:
-        servers = parse_server(buffer)
-    if ver == 2:
-        servers = parse_server_v2(buffer)
+# Check the first byte of the string
+count = buffer.read(LENGTH_OF_SHORT)
+ver = 0
+if count == 0:
+    # If the first byte is 0 that means that it uses the default version where there are lots of data about the servers
+    ver = buffer.read(LENGTH_OF_SHORT)
 
-    print(format_json(servers))
+servers = []
+if ver == 0:
+    servers = parse_server(buffer)
+if ver == 2:
+    servers = parse_server_v2(buffer)
 
-main()
+print(format_json(servers))
