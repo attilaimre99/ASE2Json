@@ -1,7 +1,11 @@
 import requests
 import json
 
-Flags = {
+LENGTH_OF_INT = 4
+LENGTH_OF_SHORT = 2
+LENGTH_OF_CHAR = 1
+
+FLAGS = {
     "ASE_PLAYER_COUNT": 0x0004,
     "ASE_MAX_PLAYER_COUNT": 0x0008,
     "ASE_GAME_NAME": 0x0010,
@@ -26,13 +30,19 @@ class Buffer:
         self.text = text
         self.position = 0
 
+    def format(self, byte):
+        return "{:02x}".format(ord(byte))
+
+    # We use this function to read the next COUNT "bytes" from the text, then move the "cursor" after the read postion
     def read(self, count):
         ret = ""
-        for i in self.text[self.position:self.position+count]:
+        for i in self.text[self.position : self.position + count]:
             if ord(i) != 0:
-                ret += "{:02x}".format(ord(i))
+                ret += self.format(i)
 
         self.position += count
+
+        # Because we removed every 0-length byte we have to take care of the case when everything is 00, meaning 0 in decimal.
         if len(ret) == 0:
             return 0
 
@@ -44,20 +54,15 @@ class Buffer:
 
         for item in range(len):
             ch = self.read(1)
-            # print ch, chr(ch)
-            if ch == 34:
-                ret += ""
-            elif ch == 92:
-                ret += "/"
-            elif ch == 9:
-                ret += ""
-            elif ch == 10:
+            # We have a special case for some terminating characters and new-line etc.
+            if ch == 34 or ch == 92 or ch == 9 or ch == 10:
                 ret += ""
             else:
                 ret += chr(ch)
 
         return ret
     
+    # Check if there are characters where we want to go next
     def step(self, count):
         return self.position + count <= len(self.text)
 
@@ -84,30 +89,37 @@ class Server:
         self.httpPort = 0
         self.serials = 0
 
-def parse_server(buffer, servers):
+def parse_server(buffer):
 
-    count = buffer.read(4)
+    servers = []
+
+    count = buffer.read(LENGTH_OF_INT)
 
     while buffer.step(6):
         server = Server()
 
-        # Ip adress
+        # Ip address
         ip_pieces = []
         for x in range(4):
-            ip = buffer.read(1)
+            ip = buffer.read(LENGTH_OF_CHAR)
             ip_pieces.append(str(ip))
         
         ip_pieces.reverse()
         server.ip = '.'.join(ip_pieces)
 
-        server.port = buffer.read(2)
+        server.port = buffer.read(LENGTH_OF_SHORT)
 
         servers.append(server)
 
-def parse_server_v2(buffer, servers):
-    flags = buffer.read(4)
-    sequenceNumber = buffer.read(4)
-    count = buffer.read(4)
+    return servers
+
+def parse_server_v2(buffer):
+
+    servers = []
+
+    flags = buffer.read(LENGTH_OF_INT)
+    sequenceNumber = buffer.read(LENGTH_OF_INT)
+    count = buffer.read(LENGTH_OF_INT)
 
     while buffer.step(6):
         server = Server()
@@ -115,48 +127,48 @@ def parse_server_v2(buffer, servers):
         startPos = buffer.tell()
 
         # Length
-        len = buffer.read(2)
+        len = buffer.read(LENGTH_OF_SHORT)
 
-        # Ip adress
+        # Ip address
         ip_pieces = []
         for x in range(4):
-            ip = buffer.read(1)
+            ip = buffer.read(LENGTH_OF_CHAR)
             ip_pieces.append(str(ip))
         
         ip_pieces.reverse()
         server.ip = '.'.join(ip_pieces)
 
-        server.port = buffer.read(2)
+        server.port = buffer.read(LENGTH_OF_SHORT)
  
-        if (flags & Flags["ASE_PLAYER_COUNT"]) != 0:
-            server.playersCount = buffer.read(2)
+        if (flags & FLAGS["ASE_PLAYER_COUNT"]) != 0:
+            server.playersCount = buffer.read(LENGTH_OF_SHORT)
 
-        if (flags & Flags["ASE_MAX_PLAYER_COUNT"]) != 0:
-            server.maxPlayersCount = buffer.read(2)
+        if (flags & FLAGS["ASE_MAX_PLAYER_COUNT"]) != 0:
+            server.maxPlayersCount = buffer.read(LENGTH_OF_SHORT)
 
-        if (flags & Flags["ASE_GAME_NAME"]) != 0:
+        if (flags & FLAGS["ASE_GAME_NAME"]) != 0:
             server.gameName = buffer.readString()
 
-        if (flags & Flags["ASE_SERVER_NAME"]) != 0:
+        if (flags & FLAGS["ASE_SERVER_NAME"]) != 0:
             server.serverName = buffer.readString()
 
-        if (flags & Flags["ASE_GAME_MODE"]) != 0:
+        if (flags & FLAGS["ASE_GAME_MODE"]) != 0:
             server.modeName = buffer.readString()
 
-        if (flags & Flags["ASE_MAP_NAME"]) != 0:
+        if (flags & FLAGS["ASE_MAP_NAME"]) != 0:
             server.mapName = buffer.readString()
 
-        if (flags & Flags["ASE_SERVER_VER"]) != 0:
+        if (flags & FLAGS["ASE_SERVER_VER"]) != 0:
             server.verName = buffer.readString()
             
-        if (flags & Flags["ASE_PASSWORDED"]) != 0:
-            server.passworded = buffer.read(1)
+        if (flags & FLAGS["ASE_PASSWORDED"]) != 0:
+            server.passworded = buffer.read(LENGTH_OF_CHAR)
 
-        if (flags & Flags["ASE_SERIALS"]) != 0:
-            server.serials = buffer.read(1)
+        if (flags & FLAGS["ASE_SERIALS"]) != 0:
+            server.serials = buffer.read(LENGTH_OF_CHAR)
 
-        if (flags & Flags["ASE_PLAYER_LIST"]) != 0:
-            listSize = buffer.read(2)
+        if (flags & FLAGS["ASE_PLAYER_LIST"]) != 0:
+            listSize = buffer.read(LENGTH_OF_SHORT)
 
             for i in range(listSize):
                 playerNick = buffer.readString()
@@ -164,54 +176,41 @@ def parse_server_v2(buffer, servers):
         
         # Only used for MTA, we don't care
         noResponse = 0
-        if (flags & Flags["ASE_RESPONDING"]) != 0:
-            noResponse = buffer.read(1)
+        if (flags & FLAGS["ASE_RESPONDING"]) != 0:
+            noResponse = buffer.read(LENGTH_OF_CHAR)
 
         # Only used for MTA, we don't care
         restriction = 0
-        if (flags & Flags["ASE_RESTRICTION"]) != 0:
-            restriction = buffer.read(4)
+        if (flags & FLAGS["ASE_RESTRICTION"]) != 0:
+            restriction = buffer.read(LENGTH_OF_INT)
         
         # Only used for MTA, we don't care
-        if (flags & Flags["ASE_SEARCH_IGNORE_SECTIONS"]) != 0:
-            numItems = buffer.read(1)
+        if (flags & FLAGS["ASE_SEARCH_IGNORE_SECTIONS"]) != 0:
+            numItems = buffer.read(LENGTH_OF_CHAR)
 
             # Skip
             buffer.seek(buffer.tell() + 2*numItems)
 
         # Only used for MTA, we don't care
-        if (flags & Flags["ASE_KEEP_FLAG"]) != 0:
-            keepFlag = buffer.read(1)
+        if (flags & FLAGS["ASE_KEEP_FLAG"]) != 0:
+            keepFlag = buffer.read(LENGTH_OF_CHAR)
 
-        if (flags & Flags["ASE_HTTP_PORT"]) != 0:
-            server.httpPort = buffer.read(2)
+        if (flags & FLAGS["ASE_HTTP_PORT"]) != 0:
+            server.httpPort = buffer.read(LENGTH_OF_SHORT)
 
         specialFlags = 0
-        if (flags & Flags["ASE_SPECIAL"]) != 0:
-            specialFlags = buffer.read(1)
+        if (flags & FLAGS["ASE_SPECIAL"]) != 0:
+            specialFlags = buffer.read(LENGTH_OF_CHAR)
 
+        # Jump to the next server
         buffer.seek(startPos + len)
 
+        # Append the server to the set
         servers.append(server)
 
-def main():    
-    # We get the data from the official server
-    r = requests.get('https://master.multitheftauto.com/ase/mta/').content
-    buffer = Buffer(r)
+    return servers
 
-    # Initialize servers set
-    servers = []
-    
-    count = buffer.read(2)
-    ver = 0
-    if count == 0:
-        ver = buffer.read(2)
-
-    if ver == 0:
-        parse_server(buffer, servers)
-    if ver == 2:
-        parse_server_v2(buffer, servers)
-
+def format_json(servers):
     string = "[\n"
 
     firstServer = True
@@ -250,8 +249,26 @@ def main():
 
     string += "\n    ]"
 
+    return string
 
-    print(string)
+def main():    
+    # We get the data from the official server
+    r = requests.get('https://master.multitheftauto.com/ase/mta/').content
+    buffer = Buffer(r)
+    
+    # Check the first byte of the string
+    count = buffer.read(LENGTH_OF_SHORT)
+    ver = 0
+    if count == 0:
+        # If the first byte is 0 that means that it uses the default version where there are lots of data about the servers
+        ver = buffer.read(LENGTH_OF_SHORT)
 
-if __name__ == "__main__":
-    main()
+    servers = []
+    if ver == 0:
+        servers = parse_server(buffer)
+    if ver == 2:
+        servers = parse_server_v2(buffer)
+
+    print(format_json(servers))
+
+main()
